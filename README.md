@@ -91,15 +91,15 @@ make sure user running script has write perms <br>
 <br>
 
 ## create file wherever you keep scripts [optional]
-```$ mkdir $HOME/scripts && touch $HOME/scripts/dnsautoupdate.sh```
+```$ mkdir $HOME/scripts && touch $HOME/scripts/updater.sh```
 
 <br>
 
 
-## save completed script
+## save completed script [add your variables 'per-record', keeping them in sequence]
 
 ```
-$ cat <<'EOF' | sudo tee $HOME/scripts/dnsautoupdate.sh
+$ cat <<'EOF' | sudo tee $HOME/scripts/updater.sh
 #!/bin/bash
 
 #################### FILL THESE VARIABLES ####################
@@ -133,7 +133,7 @@ EOF
 <br>
 
 ## make script executable
-`chmod +x dnsautoupdate.sh`
+`chmod +x updater.sh`
 
 <br>
 
@@ -151,4 +151,4 @@ Select an editor.  To change later, run 'select-editor'.
 
 - add to end of cron file - this will run every 30 min <br>
 
-`*/30 * * * * /path/to/dnsautoupdate.sh`
+`*/30 * * * * /path/to/updater.sh`
