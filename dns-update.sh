@@ -1,117 +1,118 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# --------------------------------------------------------------------
+# Cloudflare DDNS updater — original functionality retained
+# Usage: dns-update.sh <email> <api_token> [--auto]
+# --------------------------------------------------------------------
+set -euo pipefail
 
-set -e
+EMAIL=${1:-}
+TOKEN=${2:-}
+MODE=${3:-}
 
-EMAIL=$1
-TOKEN=$2
-MODE=$3
-
-if [ -z "$EMAIL" ] || [ -z "$TOKEN" ]; then
-  echo "Usage: $0 <email> <api_token> [--auto]"
+if [[ -z "$EMAIL" || -z "$TOKEN" ]]; then
+  echo "Usage: $0 <email> <api_token> [--auto]" >&2
   exit 1
 fi
 
-mkdir -p ./logs
-JSON_LOG="./logs/log.json"
+# ---------- paths & log --------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOG_DIR="$SCRIPT_DIR/logs"
+JSON_LOG="$LOG_DIR/log.json"
+mkdir -p "$LOG_DIR"
+[[ -f "$JSON_LOG" ]] || echo '[]' > "$JSON_LOG"
 
-if [ ! -f "$JSON_LOG" ]; then
-  echo "[]" > "$JSON_LOG"
-fi
+log () {                     # zone record status [old_ip] [new_ip]
+    local time zone record status old new
+    time="$(date -u +"%a %b %d %T UTC %Y")"
+    zone="$1"
+    record="$2"
+    status="$3"
+    old="${4-}"
+    new="${5-}"
 
-CURRENT_IP=$(curl -s --max-time 10 https://cloudflare.com/cdn-cgi/trace | grep '^ip=' | cut -d= -f2)
-
-if [[ ! $CURRENT_IP =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-  echo "Error: Could not fetch valid public IP."
-  exit 1
-fi
-
-echo "Current public IP: $CURRENT_IP"
-
-zones_json=$(curl -s --fail --request GET \
-  --url "https://api.cloudflare.com/client/v4/zones" \
-  -H "Content-Type: application/json" \
-  -H "X-Auth-Email: $EMAIL" \
-  -H "Authorization: Bearer $TOKEN")
-
-zones_count=$(echo "$zones_json" | jq '.result | length')
-
-if [ "$zones_count" -eq 0 ]; then
-  echo "Error: No zones found."
-  exit 1
-fi
-
-echo "Available zones:"
-for i in $(seq 0 $(($zones_count - 1))); do
-  zone_name=$(echo "$zones_json" | jq -r ".result[$i].name")
-  echo "$(($i + 1)). $zone_name"
-done
-
-if [ "$MODE" = "--auto" ]; then
-  selected_indices=($(seq 1 $zones_count))
-else
-  read -p "Enter the numbers of the zones you want to operate on (space separated): " -a selected_indices
-fi
-
-for index in "${selected_indices[@]}"; do
-  zone_idx=$((index - 1))
-  zone_id=$(echo "$zones_json" | jq -r ".result[$zone_idx].id")
-  zone_name=$(echo "$zones_json" | jq -r ".result[$zone_idx].name")
-
-  echo "Fetching DNS records for zone: $zone_name..."
-
-  records_json=$(curl --silent --fail --request GET \
-    --url "https://api.cloudflare.com/client/v4/zones/$zone_id/dns_records?type=A" \
-    -H "Content-Type: application/json" \
-    -H "X-Auth-Email: $EMAIL" \
-    -H "Authorization: Bearer $TOKEN")
-
-  record_count=$(echo "$records_json" | jq '.result | length')
-
-  if [ "$record_count" -eq 0 ]; then
-    echo "$(date): No A records found for $zone_name" | tee -a "$JSON_LOG"
-    continue
-  fi
-
-  for record_idx in $(seq 0 $(($record_count - 1))); do
-    record_name=$(echo "$records_json" | jq -r ".result[$record_idx].name")
-    record_id=$(echo "$records_json" | jq -r ".result[$record_idx].id")
-    record_content=$(echo "$records_json" | jq -r ".result[$record_idx].content")
-
-    if [ "$record_content" != "$CURRENT_IP" ]; then
-      echo "Updating $record_name ($record_content -> $CURRENT_IP)"
-
-      update_response=$(curl --silent --output /dev/null --write-out "%{http_code}" --request PUT \
-        --url "https://api.cloudflare.com/client/v4/zones/$zone_id/dns_records/$record_id" \
-        -H "Content-Type: application/json" \
-        -H "X-Auth-Email: $EMAIL" \
-        -H "Authorization: Bearer $TOKEN" \
-        -d "{\"type\":\"A\",\"name\":\"$record_name\",\"content\":\"$CURRENT_IP\"}")
-
-      if [ "$update_response" -eq 200 ]; then
-        status="updated"
-      else
-        status="failed (HTTP $update_response)"
-      fi
-
-      jq --arg time "$(date)" \
-         --arg zone "$zone_name" \
-         --arg record "$record_name" \
-         --arg old_ip "$record_content" \
-         --arg new_ip "$CURRENT_IP" \
-         --arg status "$status" \
-         '. += [{"timestamp": $time, "zone": $zone, "record": $record, "old_ip": $old_ip, "new_ip": $new_ip, "status": $status}]' "$JSON_LOG" > "$JSON_LOG.tmp" && mv "$JSON_LOG.tmp" "$JSON_LOG"
-
+    if [[ "$status" == "updated" ]]; then
+        jq --arg time "$time" \
+           --arg zone "$zone" \
+           --arg record "$record" \
+           --arg old_ip "$old" \
+           --arg new_ip "$new" \
+           --arg status "$status" \
+           '. += [{timestamp:$time,
+                   zone:$zone,
+                   record:$record,
+                   old_ip:$old_ip,
+                   new_ip:$new_ip,
+                   status:$status}]' \
+           "$JSON_LOG" > "$JSON_LOG.tmp" && mv "$JSON_LOG.tmp" "$JSON_LOG"
     else
-      echo "No update needed for $record_name (already $CURRENT_IP)"
+        jq --arg time "$time" \
+           --arg zone "$zone" \
+           --arg record "$record" \
+           --arg ip "$old" \
+           --arg status "$status" \
+           '. += [{timestamp:$time,
+                   zone:$zone,
+                   record:$record,
+                   ip:$ip,
+                   status:$status}]' \
+           "$JSON_LOG" > "$JSON_LOG.tmp" && mv "$JSON_LOG.tmp" "$JSON_LOG"
+    fi
+}
 
-      jq --arg time "$(date)" \
-         --arg zone "$zone_name" \
-         --arg record "$record_name" \
-         --arg ip "$CURRENT_IP" \
-         --arg status "no_change" \
-         '. += [{"timestamp": $time, "zone": $zone, "record": $record, "ip": $ip, "status": $status}]' "$JSON_LOG" > "$JSON_LOG.tmp" && mv "$JSON_LOG.tmp" "$JSON_LOG"
+cf_get () { curl -sS --fail -H "Authorization: Bearer $TOKEN" "$@"; }
+cf_put () { curl -sS --fail -X PUT -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" --data "$2" "$1"; }
+
+# ---------- current public IP --------------------------------------
+CURRENT_IP=$(curl -sS --max-time 10 https://cloudflare.com/cdn-cgi/trace | awk -F= '/^ip=/{print $2}')
+[[ "$CURRENT_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || { echo "❌  Could not retrieve public IPv4" >&2; exit 1; }
+
+# ---------- fetch zones --------------------------------------------
+zones_json=$(cf_get "https://api.cloudflare.com/client/v4/zones")
+zones_cnt=$(jq '.result|length' <<<"$zones_json")
+(( zones_cnt > 0 )) || { echo "❌  No zones found" >&2; exit 1; }
+
+# ---------- pick zones ---------------------------------------------
+if [[ "$MODE" == "--auto" ]]; then
+  sel_idx=($(seq 0 $((zones_cnt-1))))
+else
+  echo "Available zones:"
+  for i in $(seq 0 $((zones_cnt-1))); do
+    echo "$((i+1)). $(jq -r ".result[$i].name" <<<"$zones_json")"
+  done
+  read -rp "Enter zone numbers (space‑separated): " -a tmp
+  sel_idx=($(for n in "${tmp[@]}"; do echo $((n-1)); done))
+fi
+
+# ---------- iterate -------------------------------------------------
+for idx in "${sel_idx[@]}"; do
+  zone_id=$(jq -r ".result[$idx].id"   <<<"$zones_json")
+  zone_nm=$(jq -r ".result[$idx].name" <<<"$zones_json")
+
+  rec_json=$(cf_get "https://api.cloudflare.com/client/v4/zones/$zone_id/dns_records?type=A")
+  rec_cnt=$(jq '.result|length' <<<"$rec_json")
+  (( rec_cnt > 0 )) || { echo "ℹ️  $zone_nm: no A records" ; continue; }
+
+  for r in $(seq 0 $((rec_cnt-1))); do
+    rec_id=$(jq -r ".result[$r].id"      <<<"$rec_json")
+    rec_nm=$(jq -r ".result[$r].name"    <<<"$rec_json")
+    rec_ip=$(jq -r ".result[$r].content" <<<"$rec_json")
+
+    if [[ "$rec_ip" == "$CURRENT_IP" ]]; then
+      echo "No update needed for $rec_nm ($CURRENT_IP)"
+      log "$zone_nm" "$rec_nm" "no_change" "$rec_ip"
+      continue
+    fi
+
+    body=$(jq -n --arg t A --arg n "$rec_nm" --arg c "$CURRENT_IP" \
+                  '{type:$t,name:$n,content:$c}')
+    if cf_put "https://api.cloudflare.com/client/v4/zones/$zone_id/dns_records/$rec_id" "$body" > /dev/null; then
+      echo "✅  Updated $rec_nm  $rec_ip → $CURRENT_IP"
+      log "$zone_nm" "$rec_nm" "updated" "$rec_ip" "$CURRENT_IP"
+    else
+      echo "❌  Failed to update $rec_nm" >&2
+      log "$zone_nm" "$rec_nm" "failed" "$rec_ip" "$CURRENT_IP"
     fi
   done
 done
 
-echo "Finished DNS record update process."
+echo "Finished."

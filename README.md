@@ -1,17 +1,27 @@
+````markdown
 # Dynamic Cloudflare DNS Updater
 
-Never use a clunky DDNS service again.  
-Lightweight script to fetch, update, and sync your Cloudflare DNS records automatically to your current IPv4 address.
+Never use a clunky DDNS service again. Use this clunky bash script instead.
+Lightweight Bash script to fetch, update, and sync your Cloudflare **A records** to the host’s current public IPv4 address.
 
 ---
 
 ## Setup
 
 ```bash
-# Download or clone the script
-# Make it executable
-chmod +x $HOME/scripts/dns-update.sh
-```
+# copy or clone the script
+mkdir -p $HOME/scripts
+cp dns-update.sh $HOME/scripts/
+
+# make it executable
+chmod 700 $HOME/scripts/dns-update.sh
+````
+
+> **Prerequisites**
+> \* `bash` (4.x or later)
+> \* `jq` (1.5+)
+> \* Cloudflare **API token** with Zone → Read and DNS → Edit
+>   Authenticate with `Authorization: Bearer <TOKEN>` only—do **not** send `X‑Auth‑Email`.
 
 ---
 
@@ -23,8 +33,7 @@ chmod +x $HOME/scripts/dns-update.sh
 bash $HOME/scripts/dns-update.sh your@email.com your_api_token
 ```
 
-- You will be prompted to select which zones to operate on.
-- Only selected zones/records will be updated.
+You will be prompted to pick the zones to update; only those zones’ A records are modified.
 
 ### Automatic (all zones and records)
 
@@ -32,8 +41,7 @@ bash $HOME/scripts/dns-update.sh your@email.com your_api_token
 bash $HOME/scripts/dns-update.sh your@email.com your_api_token --auto
 ```
 
-- Automatically fetches and updates **all A records** across **all zones**.
-- No user input required.
+Updates **every A record** across **all zones** without user input.
 
 ---
 
@@ -45,22 +53,31 @@ Edit your crontab:
 crontab -e
 ```
 
-Add this line to your crontab to automate this task to run every 30 minutes
+Run the updater every 15 minutes:
 
-```bash
-*/30 * * * * /home/<USER>/scripts/dns-update.sh your@email.com your_api_token --auto
+```cron
+*/15 * * * * /home/<USER>/scripts/dns-update.sh your@email.com your_api_token --auto
 ```
 
+Add `SHELL=/bin/bash` and a suitable `PATH=` line **above** the job if they are not already defined for your crontab.
 Replace `<USER>` with your actual username.
 
 ---
 
 ## Logs
 
-- Logs are saved to: `./logs/log.json`
-- Each action (update or no change) is timestamped and recorded.
-- Errors are recorded with full HTTP response codes if update fails.
+* JSON log file: `logs/log.json` (created on first run in the same directory as the script)
+* Each entry records:
+
+  * `timestamp` (UTC)
+  * `zone`
+  * `record`
+  * `status` (`updated`, `no_change`, or `failed`)
+  * `old_ip` / `new_ip` or `ip` depending on action
+* Script exits non‑zero on failure; cron will mail any error output to the user.
 
 ---
 
-# ✅ Done
+```
+::contentReference[oaicite:0]{index=0}
+```
